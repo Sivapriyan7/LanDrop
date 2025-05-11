@@ -1,0 +1,58 @@
+.root {
+    -fx-font-family: "Segoe UI", Arial, sans-serif; /* A common modern font */
+}
+
+.sidebar-button {
+    -fx-background-color: #3c3c3c; /* Darker buttons */
+    -fx-text-fill: white;
+    -fx-font-size: 14px;
+    -fx-padding: 10px 15px;
+    -fx-background-radius: 5px; /* Slightly rounded corners */
+    -fx-border-color: #4f4f4f;
+    -fx-border-width: 1px;
+    -fx-border-radius: 5px;
+}
+
+.sidebar-button:hover {
+    -fx-background-color: #4f4f4f; /* Lighter on hover */
+}
+
+.sidebar-button:pressed {
+    -fx-background-color: #25c2a0; /* Teal when pressed */
+}
+
+.device-name {
+    -fx-font-size: 24px;
+    -fx-font-weight: bold;
+    -fx-text-fill: white;
+}
+
+.device-code {
+    -fx-font-size: 14px;
+    -fx-text-fill: #b0b0b0; /* Lighter gray for subtext */
+}
+
+.list-view {
+    -fx-background-color: #3c3c3c;
+    -fx-border-color: #4f4f4f;
+}
+
+.list-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: white;
+    -fx-padding: 8px;
+    -fx-font-size: 13px;
+}
+
+.list-cell:filled:selected, .list-cell:filled:selected:focused {
+    -fx-background-color: #25c2a0; /* Teal for selection */
+    -fx-text-fill: white;
+}
+
+.list-cell:filled:hover {
+    -fx-background-color: #4f4f4f; /* Highlight on hover */
+}
+
+.label {
+     -fx-text-fill: white; /* Default all labels to white for dark theme */
+}
