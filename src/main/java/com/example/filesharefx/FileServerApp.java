@@ -5,6 +5,10 @@ import com.example.filesharefx.model.FileMetadata;
 import com.example.filesharefx.model.FileTransferRequest;
 import com.example.filesharefx.services.FileShareHttpServer;
 import com.example.filesharefx.services.UdpDiscoveryService;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject; // For parsing simple JSON responses
+import com.google.gson.JsonParser; // For parsing simple JSON responses
+
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
@@ -21,21 +25,21 @@ import javafx.stage.Stage;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
 import java.net.URL;
-// Import java.net.http.HttpClient etc. for sending files
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID; // For fingerprint and file IDs
-import com.google.gson.Gson; // For HTTP client requests
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class FileServerApp extends Application {
 
@@ -44,115 +48,69 @@ public class FileServerApp extends Application {
     private DeviceInfo ownDeviceInfo;
     private UdpDiscoveryService udpDiscoveryService;
     private FileShareHttpServer fileShareHttpServer;
-    private HttpClient httpClient; // For sending files
-    private Gson gson; // For serializing client requests
 
-    private Map<String, FileTransferRequest> pendingTransfers = new HashMap<>(); // SessionID or some key -> request
+    private HttpClient httpClient;
+    private Gson gson;
+    private ExecutorService backgroundExecutor;
 
+    // Store pending transfers that this user has accepted. Key: SessionID
+    private Map<String, FileTransferRequest> pendingIncomingTransfers = new HashMap<>();
 
-    // HTTP Server Port - CHECK LOCAL SEND PROTOCOL - or choose dynamically
-    private static final int DEFAULT_HTTP_PORT = 53318; // Example, make configurable or find available
+    // Default HTTP Port (LocalSend protocol suggests 53317 as default for HTTP too)
+    // Using 0 will make the OS pick an available port, which is good for avoiding conflicts during testing.
+    // The actual port used will be announced.
+    private static final int DEFAULT_HTTP_SERVER_PORT = 0; // 0 for dynamic, or 53317 for LocalSend default
+
 
     @Override
     public void start(Stage primaryStage) {
         gson = new Gson();
         httpClient = HttpClient.newBuilder()
-                .version(HttpClient.Version.HTTP_1_1)
+                .version(HttpClient.Version.HTTP_1_1) // Or HTTP_2 if server supports
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
 
-        // --- Initialize Own Device Info ---
-        String uniqueFingerprint = UUID.randomUUID().toString();
-        // Try to get a non-loopback IP, port will be set by HTTP server
-        // Alias can be from settings or user input later
-        ownDeviceInfo = new DeviceInfo("My JavaFX Sender", "Samsung S24","mobile",uniqueFingerprint, null, DEFAULT_HTTP_PORT);
-        // ownDeviceInfo.setIp() will be called by UdpDiscoveryService and port by HttpServer
+        backgroundExecutor = Executors.newFixedThreadPool(5, r -> {
+            Thread t = Executors.defaultThreadFactory().newThread(r);
+            t.setDaemon(true);
+            return t;
+        });
+
+        // --- Initialize Own Device Info (as per LocalSend protocol) ---
+        String uniqueFingerprint = UUID.randomUUID().toString(); // Random string for HTTP fingerprint
+        String deviceAlias = "JavaFX Peer"; // Make this configurable later
+        String deviceModel = System.getProperty("os.name", "Desktop"); // Basic OS name as model
+        String deviceType = "desktop"; // or "laptop", "server"
+
+        // Port will be updated by FileShareHttpServer after it starts
+        ownDeviceInfo = new DeviceInfo(deviceAlias, uniqueFingerprint, deviceModel, deviceType, DEFAULT_HTTP_SERVER_PORT, true);
+        ownDeviceInfo.setVersion("2.0"); // Protocol version
+        ownDeviceInfo.setProtocol(getOwnProtocol()); // "http" for now
+        ownDeviceInfo.setDownload(isDownloadEnabled()); // Is this app ready to receive?
 
         // --- Setup Services ---
         discoveredDevicesUiList = FXCollections.observableArrayList();
-        udpDiscoveryService = new UdpDiscoveryService(discoveredDevicesUiList, ownDeviceInfo);
-        fileShareHttpServer = new FileShareHttpServer(ownDeviceInfo, this, DEFAULT_HTTP_PORT); // Pass `this` for UI interaction
+        // Pass 'this' (FileServerApp instance) to services if they need to call back to it
+        fileShareHttpServer = new FileShareHttpServer(ownDeviceInfo, this, DEFAULT_HTTP_SERVER_PORT);
+        udpDiscoveryService = new UdpDiscoveryService(discoveredDevicesUiList, ownDeviceInfo, this);
+
 
         try {
-            fileShareHttpServer.start();
-            // Update ownDeviceInfo with the actual port the server is listening on
-            ownDeviceInfo.setPort(fileShareHttpServer.getPort());
-            System.out.println("Own HTTP server is on port: " + ownDeviceInfo.getPort());
-            udpDiscoveryService.start();
+            fileShareHttpServer.start(); // Starts HTTP server, ownDeviceInfo.port gets updated inside
+            // ownDeviceInfo.setPort() is now called within fileShareHttpServer.start()
+            System.out.println("FileServerApp: Own HTTP server is on port: " + ownDeviceInfo.getPort());
+            udpDiscoveryService.start(); // Now UDP discovery can announce the correct HTTP port
         } catch (IOException e) {
-            System.err.println("FATAL: Could not start services: " + e.getMessage());
+            System.err.println("FATAL: Could not start network services: " + e.getMessage());
             e.printStackTrace();
-            // Show error dialog to user
-            showAlert("Service Error", "Could not start network services: " + e.getMessage(), Alert.AlertType.ERROR);
-            // Optionally, Platform.exit();
+            showAlert("Service Startup Error", "Could not start critical network services: " + e.getMessage() + "\nThe application will now close.", Alert.AlertType.ERROR);
+            Platform.exit(); // Exit if services can't start
             return;
         }
 
-
-        // Sidebar
-        VBox sidebar = new VBox(20);
-        sidebar.setPadding(new Insets(30));
-        sidebar.setStyle("-fx-background-color: #1e1e1e;"); // Dark gray
-        sidebar.setPrefWidth(180); // Slightly wider for device names
-
-        Button receiveBtn = new Button("Receive (Auto)"); // Receive is now handled by HTTP server
-        Button sendBtn = new Button("Send File...");
-        Button settingsBtn = new Button("Settings"); // Placeholder
-
-        for (Button btn : new Button[]{receiveBtn, sendBtn, settingsBtn}) {
-            btn.getStyleClass().add("sidebar-button");
-            btn.setMaxWidth(Double.MAX_VALUE);
-        }
-        sendBtn.setOnAction(e -> handleSendFileAction(primaryStage));
-
-        sidebar.getChildren().addAll(receiveBtn, sendBtn, settingsBtn);
-
-        // --- Center content ---
-        VBox centerBox = new VBox(15);
-        centerBox.setPadding(new Insets(20));
-        centerBox.setAlignment(Pos.TOP_CENTER);
-
-        Circle circle = new Circle(50);
-        circle.setFill(Color.web("#25c2a0")); // Teal accent
-
-        Label deviceNameLabel = new Label(ownDeviceInfo.getAlias());
-        deviceNameLabel.getStyleClass().add("device-name");
-
-        Label deviceCodeLabel = new Label("ID: " + ownDeviceInfo.getFingerprint().substring(0, 6)); // Short fingerprint
-        deviceCodeLabel.getStyleClass().add("device-code");
-
-
-        Label devicesListLabel = new Label("Available Devices:");
-        devicesListLabel.setTextFill(Color.WHITE);
-
-        deviceListView = new ListView<>(discoveredDevicesUiList);
-        deviceListView.setPrefHeight(200);
-        // Customize cell factory to display DeviceInfo nicely if needed
-        deviceListView.setCellFactory(param -> new ListCell<>() {
-            @Override
-            protected void updateItem(DeviceInfo item, boolean empty) {
-                super.updateItem(item, empty);
-                if (empty || item == null) {
-                    setText(null);
-                } else {
-                    setText(item.getAlias() + " (" + item.getIp() + ":" + item.getPort() + ")");
-                }
-            }
-        });
-
-
-        VBox devicesDisplayBox = new VBox(10, devicesListLabel, deviceListView);
-        devicesDisplayBox.setAlignment(Pos.CENTER_LEFT);
-
-        centerBox.getChildren().addAll(circle, deviceNameLabel, deviceCodeLabel, devicesDisplayBox);
-
-        // Root layout
-        BorderPane root = new BorderPane();
-        root.setLeft(sidebar);
-        root.setCenter(centerBox);
-        root.setStyle("-fx-background-color: #2b2b2b;"); // Very dark gray
-
-        Scene scene = new Scene(root, 800, 600); // Increased size
+        // --- UI Setup ---
+        BorderPane root = setupUI(primaryStage);
+        Scene scene = new Scene(root, 800, 600);
 
         URL cssUrl = getClass().getResource("/com/example/filesharefx/style.css");
         if (cssUrl != null) {
@@ -161,16 +119,87 @@ public class FileServerApp extends Application {
             System.err.println("WARNING: style.css not found!");
         }
 
-        primaryStage.setTitle("FileShareFX (LocalSend Clone)");
+        primaryStage.setTitle("FileShareFX (LocalSend v2.0 Clone)");
         primaryStage.setScene(scene);
-        primaryStage.setOnCloseRequest(event -> stopServices()); // Ensure services are stopped
+        primaryStage.setOnCloseRequest(event -> {
+            System.out.println("Close request received. Shutting down...");
+            stopServicesAndExecutor();
+            // Platform.exit() will be called implicitly if not already.
+        });
         primaryStage.show();
+    }
+
+    private BorderPane setupUI(Stage ownerStage) {
+        // Sidebar
+        VBox sidebar = new VBox(20);
+        sidebar.setPadding(new Insets(30));
+        sidebar.setStyle("-fx-background-color: #1e1e1e;");
+        sidebar.setPrefWidth(180);
+
+        Button sendBtn = new Button("Send File...");
+        Button settingsBtn = new Button("Settings"); // Placeholder
+
+        for (Button btn : new Button[]{sendBtn, settingsBtn}) {
+            btn.getStyleClass().add("sidebar-button");
+            btn.setMaxWidth(Double.MAX_VALUE);
+        }
+        sendBtn.setOnAction(e -> handleSendFileAction(ownerStage));
+
+        sidebar.getChildren().addAll(sendBtn, settingsBtn);
+
+        // Center content
+        VBox centerBox = new VBox(15);
+        centerBox.setPadding(new Insets(20));
+        centerBox.setAlignment(Pos.TOP_CENTER);
+
+        Circle circle = new Circle(50);
+        circle.setFill(Color.web("#25c2a0"));
+
+        Label deviceNameLabel = new Label(ownDeviceInfo.getAlias());
+        deviceNameLabel.getStyleClass().add("device-name");
+
+        // Display a short part of the fingerprint for identification
+        Label deviceCodeLabel = new Label("ID: " + ownDeviceInfo.getFingerprint().substring(0, Math.min(8, ownDeviceInfo.getFingerprint().length())));
+        deviceCodeLabel.getStyleClass().add("device-code");
+
+        Label devicesListLabel = new Label("Available Devices:");
+        devicesListLabel.setTextFill(Color.WHITE);
+
+        deviceListView = new ListView<>(discoveredDevicesUiList);
+        deviceListView.setPrefHeight(250);
+        deviceListView.setCellFactory(param -> new ListCell<>() {
+            @Override
+            protected void updateItem(DeviceInfo item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setGraphic(null);
+                } else {
+                    // Display more info, e.g., alias (model) @ ip:port
+                    setText(String.format("%s (%s) - %s:%d",
+                            item.getAlias(),
+                            item.getDeviceModel() != null ? item.getDeviceModel() : item.getDeviceType(),
+                            item.getIp(),
+                            item.getPort()));
+                }
+            }
+        });
+
+        VBox devicesDisplayBox = new VBox(10, devicesListLabel, deviceListView);
+        devicesDisplayBox.setAlignment(Pos.CENTER_LEFT);
+        centerBox.getChildren().addAll(circle, deviceNameLabel, deviceCodeLabel, devicesDisplayBox);
+
+        BorderPane rootLayout = new BorderPane();
+        rootLayout.setLeft(sidebar);
+        rootLayout.setCenter(centerBox);
+        rootLayout.setStyle("-fx-background-color: #2b2b2b;");
+        return rootLayout;
     }
 
     private void handleSendFileAction(Stage ownerStage) {
         DeviceInfo selectedDevice = deviceListView.getSelectionModel().getSelectedItem();
         if (selectedDevice == null) {
-            showAlert("No Device Selected", "Please select a device to send the file to.", Alert.AlertType.INFORMATION);
+            showAlert("No Device Selected", "Please select a target device from the list.", Alert.AlertType.INFORMATION);
             return;
         }
 
@@ -179,166 +208,208 @@ public class FileServerApp extends Application {
         File fileToSend = fileChooser.showOpenDialog(ownerStage);
 
         if (fileToSend != null && fileToSend.exists()) {
-            System.out.println("Preparing to send: " + fileToSend.getName() + " to " + selectedDevice.getAlias());
-            // This is where you'd initiate the HTTP client logic
-            initiateFileSend(selectedDevice, fileToSend);
+            System.out.println("User selected file: " + fileToSend.getName() + " to send to " + selectedDevice.getAlias());
+            initiateFileSendProcedure(selectedDevice, fileToSend);
         }
     }
 
-    private void initiateFileSend(DeviceInfo recipient, File file) {
-        // 1. Send a "/send-request" to the recipient
-        // This should be done in a background thread
-        new Thread(() -> {
+    private void initiateFileSendProcedure(DeviceInfo recipient, File file) {
+        backgroundExecutor.submit(() -> {
             try {
-                FileMetadata metadata = new FileMetadata(
-                        UUID.randomUUID().toString(), // Unique file ID for this transfer
-                        file.getName(),
-                        file.length(),
-                        Files.probeContentType(file.toPath()) // Basic MIME type detection
-                );
+                // 1. Create FileMetadata
+                String fileId = UUID.randomUUID().toString();
+                String mimeType = "application/octet-stream"; // Default
+                try {
+                    String detectedMimeType = Files.probeContentType(file.toPath());
+                    if (detectedMimeType != null) {
+                        mimeType = detectedMimeType;
+                    }
+                } catch (IOException e) {
+                    System.err.println("Could not detect MIME type for " + file.getName() + ": " + e.getMessage());
+                }
+                FileMetadata metadata = new FileMetadata(fileId, file.getName(), file.length(), mimeType);
                 Map<String, FileMetadata> filesMap = new HashMap<>();
-                filesMap.put(metadata.getId(), metadata);
+                filesMap.put(fileId, metadata);
+
+                // 2. Create FileTransferRequest payload
+                // Ensure ownDeviceInfo has up-to-date IP and HTTP port
+                ownDeviceInfo.setIp(udpDiscoveryService.getLocalIpAddress()); // Refresh IP
+                ownDeviceInfo.setPort(fileShareHttpServer.getPort()); // Refresh Port
+                ownDeviceInfo.setProtocol(getOwnProtocol());
+                ownDeviceInfo.setDownload(isDownloadEnabled());
 
                 FileTransferRequest requestPayload = new FileTransferRequest(this.ownDeviceInfo, filesMap);
                 String requestJson = gson.toJson(requestPayload);
 
-                // CONSULT LOCAL SEND PROTOCOL for the exact URL and port
-                String targetUrl = recipient.getProtocol() + "://" + recipient.getIp() + ":" + recipient.getPort() + FileShareHttpServer.SEND_REQUEST_PATH;
+                // 3. Send the /send-request to the recipient
+                String targetBaseUrl = recipient.getProtocol() + "://" + recipient.getIp() + ":" + recipient.getPort();
+                String sendRequestUrl = targetBaseUrl + FileShareHttpServer.SEND_REQUEST_PATH;
 
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(targetUrl))
+                Platform.runLater(() -> updateStatus("Sending file request to " + recipient.getAlias() + "..."));
+
+                HttpRequest sendRequestHttp = HttpRequest.newBuilder()
+                        .uri(URI.create(sendRequestUrl))
                         .header("Content-Type", "application/json")
-                        .POST(HttpRequest.BodyPublishers.ofString(requestJson))
+                        .POST(HttpRequest.BodyPublishers.ofString(requestJson, StandardCharsets.UTF_8))
+                        .timeout(Duration.ofSeconds(15))
                         .build();
 
-                Platform.runLater(() -> showAlert("Sending", "Sending file request to " + recipient.getAlias(), Alert.AlertType.INFORMATION));
-
-                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response = httpClient.send(sendRequestHttp, HttpResponse.BodyHandlers.ofString());
 
                 if (response.statusCode() == 200) {
-                    // Assuming response body is like {"status":"accepted", "sessionId":"..."}
-                    // Parse response, if accepted, proceed to send the actual file
-                    // For simplicity, assuming it's accepted and proceeding.
-                    System.out.println("Send request accepted by " + recipient.getAlias());
-                    Platform.runLater(() -> showAlert("Accepted", "File request accepted by " + recipient.getAlias() + ". Sending file...", Alert.AlertType.INFORMATION));
-                    sendActualFile(recipient, file, metadata.getId());
+                    JsonObject responseJson = JsonParser.parseString(response.body()).getAsJsonObject();
+                    String status = responseJson.has("status") ? responseJson.get("status").getAsString() : "";
+                    String sessionId = responseJson.has("sessionId") ? responseJson.get("sessionId").getAsString() : null;
+
+                    if ("accepted".equalsIgnoreCase(status) && sessionId != null) {
+                        Platform.runLater(() -> updateStatus("Request accepted by " + recipient.getAlias() + ". Session: " + sessionId + ". Uploading..."));
+                        // 4. If accepted, send the actual file to /send
+                        sendActualFile(recipient, file, fileId, sessionId, targetBaseUrl);
+                    } else {
+                        Platform.runLater(() -> showAlert("Request Declined/Failed", "Recipient " + recipient.getAlias() + " did not accept the transfer or responded unexpectedly. Status: " + status, Alert.AlertType.WARNING));
+                    }
                 } else {
-                    System.err.println("Send request failed or was rejected by " + recipient.getAlias() + ". Status: " + response.statusCode() + " Body: " + response.body());
-                    Platform.runLater(() -> showAlert("Failed", "File request rejected or failed. Status: " + response.statusCode(), Alert.AlertType.ERROR));
+                    Platform.runLater(() -> showAlert("Request Failed", "Failed to send file request to " + recipient.getAlias() + ". HTTP Status: " + response.statusCode() + "\nBody: " + response.body(), Alert.AlertType.ERROR));
                 }
 
             } catch (IOException | InterruptedException e) {
-                System.err.println("Error sending file request: " + e.getMessage());
+                System.err.println("Error during file send procedure: " + e.getMessage());
                 e.printStackTrace();
-                Platform.runLater(() -> showAlert("Error", "Could not send file request: " + e.getMessage(), Alert.AlertType.ERROR));
+                Platform.runLater(() -> showAlert("Send Error", "An error occurred while trying to send the file: " + e.getMessage(), Alert.AlertType.ERROR));
             }
-        }).start();
+        });
     }
 
-    private void sendActualFile(DeviceInfo recipient, File file, String fileId) {
-        // 2. If accepted, send the actual file to "/send" (or protocol equivalent)
-        // This should also be in a background thread
-        new Thread(() -> {
-            try {
-                // CONSULT LOCAL SEND PROTOCOL for the exact URL and port for sending file data
-                String targetUrl = recipient.getProtocol() + "://" + recipient.getIp() + ":" + recipient.getPort() + FileShareHttpServer.SEND_FILE_PATH;
+    private void sendActualFile(DeviceInfo recipient, File file, String fileId, String sessionId, String targetBaseUrl) {
+        // This method is called from the background thread in initiateFileSendProcedure
+        try {
+            String sendFileUrl = targetBaseUrl + FileShareHttpServer.SEND_FILE_PATH;
 
-                HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                        .uri(URI.create(targetUrl))
-                        .header("Content-Type", "application/octet-stream") // Or appropriate MIME type
-                        .header("X-File-Name", file.getName()) // Custom header, check protocol
-                        .header("X-File-ID", fileId);          // Custom header, check protocol
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
+                    .uri(URI.create(sendFileUrl))
+                    .header("Content-Type", "application/octet-stream") // Standard for binary data
+                    .header("X-Session-ID", sessionId) // Session ID from /send-request response
+                    .header("X-File-ID", fileId)       // File ID being sent
+                    // The LocalSend protocol might specify other headers e.g. for filename if not part of FileMetadata in session
+                    .timeout(Duration.ofMinutes(30)); // Long timeout for potentially large files
 
-                HttpRequest request = requestBuilder.POST(HttpRequest.BodyPublishers.ofFile(file.toPath())).build();
+            HttpRequest sendFileHttp = requestBuilder.POST(HttpRequest.BodyPublishers.ofFile(file.toPath())).build();
 
-                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = httpClient.send(sendFileHttp, HttpResponse.BodyHandlers.ofString());
 
-                if (response.statusCode() == 200) {
-                    System.out.println("File sent successfully to " + recipient.getAlias());
-                    Platform.runLater(() -> showAlert("Success", "File '" + file.getName() + "' sent successfully!", Alert.AlertType.INFORMATION));
-                } else {
-                    System.err.println("File send failed to " + recipient.getAlias() + ". Status: " + response.statusCode() + " Body: " + response.body());
-                    Platform.runLater(() -> showAlert("Failed", "File send failed. Status: " + response.statusCode(), Alert.AlertType.ERROR));
-                }
-
-            } catch (IOException | InterruptedException e) {
-                System.err.println("Error sending actual file: " + e.getMessage());
-                e.printStackTrace();
-                Platform.runLater(() -> showAlert("Error", "Could not send file: " + e.getMessage(), Alert.AlertType.ERROR));
+            if (response.statusCode() == 200) {
+                Platform.runLater(() -> showAlert("Transfer Complete", "File '" + file.getName() + "' sent successfully to " + recipient.getAlias() + "!", Alert.AlertType.INFORMATION));
+            } else {
+                Platform.runLater(() -> showAlert("Upload Failed", "Failed to upload file to " + recipient.getAlias() + ". HTTP Status: " + response.statusCode() + "\nBody: " + response.body(), Alert.AlertType.ERROR));
             }
-        }).start();
+        } catch (IOException | InterruptedException e) {
+            System.err.println("Error sending actual file data: " + e.getMessage());
+            e.printStackTrace();
+            Platform.runLater(() -> showAlert("Upload Error", "An error occurred during file upload: " + e.getMessage(), Alert.AlertType.ERROR));
+        } finally {
+            Platform.runLater(() -> updateStatus("")); // Clear status
+        }
     }
 
+    // --- UI Interaction and Helper Methods ---
 
-    // Method for HTTP Server to call for UI confirmation
     public Optional<ButtonType> showReceiveConfirmationDialog(FileTransferRequest request) {
         Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
         alert.setTitle("Incoming File Transfer");
-        alert.setHeaderText("Receive files from " + request.getInfo().getAlias() + "?");
-        StringBuilder fileDetails = new StringBuilder();
+        alert.setHeaderText("Receive files from " + request.getInfo().getAlias() + " (" + request.getInfo().getIp() + ")?");
+        StringBuilder fileDetails = new StringBuilder("Files:\n");
         for (FileMetadata meta : request.getFiles().values()) {
-            fileDetails.append(meta.getFileName()).append(" (").append(formatFileSize(meta.getSize())).append(")\n");
+            fileDetails.append("  - ").append(meta.getFileName()).append(" (").append(formatFileSize(meta.getSize())).append(")\n");
         }
-        alert.setContentText("Files:\n" + fileDetails.toString());
-        alert.initOwner(getPrimaryStage()); // Ensure dialog is owned by main window
-
+        alert.setContentText(fileDetails.toString());
+        alert.initOwner(getPrimaryStage());
         return alert.showAndWait();
     }
 
-    // Store pending transfers that were accepted by the user.
-    public void addPendingTransfer(FileTransferRequest request) {
-        // You might use a session ID from the client or generate one.
-        // For now, storing the whole request keyed by sender fingerprint for simplicity.
-        // The HTTP server's SendFileHandler would need to look up this information.
-        // This is a very basic way to handle this state.
-        pendingTransfers.put(request.getInfo().getFingerprint() + "_" + request.getFiles().keySet().iterator().next() , request);
-        System.out.println("Added pending transfer from: " + request.getInfo().getAlias());
+    public void addPendingTransfer(String sessionId, FileTransferRequest request) {
+        pendingIncomingTransfers.put(sessionId, request);
+        System.out.println("FileServerApp: Added pending incoming transfer with session ID: " + sessionId);
+    }
+
+    public FileTransferRequest getPendingTransfer(String sessionId) {
+        return pendingIncomingTransfers.get(sessionId);
+    }
+
+    // You might want a way to remove pending transfers after completion or timeout
+    public void removePendingTransfer(String sessionId) {
+        pendingIncomingTransfers.remove(sessionId);
+        System.out.println("FileServerApp: Removed pending incoming transfer with session ID: " + sessionId);
     }
 
 
     private Stage getPrimaryStage() {
-        // A bit of a hack to get the primary stage if needed for dialog ownership.
-        // Consider passing the stage reference around or using a static holder if absolutely necessary.
-        if (deviceListView != null && deviceListView.getScene() != null) {
+        if (deviceListView != null && deviceListView.getScene() != null && deviceListView.getScene().getWindow() instanceof Stage) {
             return (Stage) deviceListView.getScene().getWindow();
         }
-        return null; // Fallback
+        // Fallback if UI not fully initialized or on wrong thread, though alert.initOwner(null) is okay
+        return null;
     }
-
 
     private void showAlert(String title, String content, Alert.AlertType alertType) {
-        Alert alert = new Alert(alertType);
-        alert.setTitle(title);
-        alert.setHeaderText(null);
-        alert.setContentText(content);
-        alert.initOwner(getPrimaryStage());
-        alert.showAndWait();
+        Platform.runLater(() -> { // Ensure alert is shown on JavaFX Application Thread
+            Alert alert = new Alert(alertType);
+            alert.setTitle(title);
+            alert.setHeaderText(null); // No header text
+            alert.setContentText(content);
+            alert.initOwner(getPrimaryStage()); // Make dialog modal to the main window if possible
+            alert.showAndWait();
+        });
     }
+    private void updateStatus(String message) { // Placeholder for a status bar or label
+        System.out.println("Status: " + message);
+        // Example: if you have a statusLabel in your UI:
+        // Platform.runLater(() -> statusLabel.setText(message));
+    }
+
 
     private static String formatFileSize(long size) {
         if (size <= 0) return "0 B";
         final String[] units = new String[]{"B", "KB", "MB", "GB", "TB"};
         int digitGroups = (int) (Math.log10(size) / Math.log10(1024));
+        if (digitGroups >= units.length) digitGroups = units.length - 1; // Safety for very large files
         return String.format("%.1f %s", size / Math.pow(1024, digitGroups), units[digitGroups]);
     }
 
-
-    private void stopServices() {
-        System.out.println("Application shutting down. Stopping services...");
+    private void stopServicesAndExecutor() {
+        System.out.println("FileServerApp: Initiating shutdown of services and executor...");
         if (udpDiscoveryService != null) {
             udpDiscoveryService.stop();
         }
         if (fileShareHttpServer != null) {
             fileShareHttpServer.stop();
         }
-        // Close HttpClient if it has an explicit close/shutdown
+        if (backgroundExecutor != null) {
+            backgroundExecutor.shutdown();
+            try {
+                if (!backgroundExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    backgroundExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                backgroundExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+        System.out.println("FileServerApp: Shutdown complete.");
     }
 
     @Override
-    public void stop() throws Exception {
-        stopServices();
+    public void stop() throws Exception { // Called when JavaFX application exits
+        stopServicesAndExecutor();
         super.stop();
     }
+
+    // --- Getters for services and config, useful for other classes ---
+    public HttpClient getHttpClient() { return httpClient; }
+    public ExecutorService getExecutorService() { return backgroundExecutor; }
+    public UdpDiscoveryService getUdpDiscoveryService() { return udpDiscoveryService; }
+    public boolean isDownloadEnabled() { return ownDeviceInfo.isDownload(); /* Or from a setting */ }
+    public String getOwnProtocol() { return ownDeviceInfo.getProtocol(); /* "http" or "https" */ }
+
 
     public static void main(String[] args) {
         launch(args);

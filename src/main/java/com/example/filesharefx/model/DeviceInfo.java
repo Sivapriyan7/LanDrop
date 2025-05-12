@@ -4,33 +4,38 @@ import java.util.Objects;
 
 public class DeviceInfo {
     private String alias;
-    private String version = "1.0-fx"; // Your app's version, adapt to protocol
-    private String deviceModel;
-    private String deviceType; // e.g., "desktop", "mobile" or more specific like "windows", "linux"
-    private String fingerprint; // A unique ID for your app instance
-    private String ip; // Will be populated from the sender or self-identified
-    private int port; // The port where this device's HTTP server is listening
+    private String version = "2.0"; // Protocol version
+    private String deviceModel; // Nullable
+    private String deviceType;  // Nullable (mobile | desktop | web | headless | server)
+    private String fingerprint; // Unique ID for your app instance
+    private String ip;          // Sender IP or self-identified
+    private int port;           // Port for HTTP/S server
     private String protocol = "http"; // "http" or "https"
-    private boolean download = true; // If this device can receive files
-    private long serverTimestamp;
+    private boolean download = false; // If download API is active (default: false as per protocol text)
+    private boolean announce = false; // True for initial announcements, false for responses
 
-    // Constructors, getters, setters
+    // Not in protocol spec for JSON, but useful internally
+    private transient long lastSeenTimestamp;
+
 
     public DeviceInfo() {
-        this.serverTimestamp = System.currentTimeMillis();
+        this.lastSeenTimestamp = System.currentTimeMillis();
     }
 
-    public DeviceInfo(String alias,String deviceModel,String deviceType, String fingerprint, String ip, int port) {
+    // Constructor for own device info
+    public DeviceInfo(String alias, String fingerprint, String deviceModel, String deviceType, int httpPort, boolean canDownload) {
         this();
         this.alias = alias;
+        this.fingerprint = fingerprint;
         this.deviceModel = deviceModel;
         this.deviceType = deviceType;
-        this.fingerprint = fingerprint;
-        this.ip = ip;
-        this.port = port;
+        this.port = httpPort;
+        this.download = canDownload;
+        // IP and protocol will be set
     }
 
-    // --- Getters and Setters for all fields ---
+
+    // --- Getters and Setters ---
     public String getAlias() { return alias; }
     public void setAlias(String alias) { this.alias = alias; }
     public String getVersion() { return version; }
@@ -49,8 +54,10 @@ public class DeviceInfo {
     public void setProtocol(String protocol) { this.protocol = protocol; }
     public boolean isDownload() { return download; }
     public void setDownload(boolean download) { this.download = download; }
-    public long getServerTimestamp() { return serverTimestamp; }
-    public void setServerTimestamp(long serverTimestamp) { this.serverTimestamp = serverTimestamp; }
+    public boolean isAnnounce() { return announce; }
+    public void setAnnounce(boolean announce) { this.announce = announce; }
+    public long getLastSeenTimestamp() { return lastSeenTimestamp; }
+    public void setLastSeenTimestamp(long lastSeenTimestamp) { this.lastSeenTimestamp = lastSeenTimestamp; }
 
 
     @Override
@@ -58,23 +65,17 @@ public class DeviceInfo {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         DeviceInfo that = (DeviceInfo) o;
-        // A device is unique by its fingerprint, or IP and Port if fingerprint isn't available early
-        if (fingerprint != null && that.fingerprint != null) {
-            return fingerprint.equals(that.fingerprint);
-        }
-        return port == that.port && Objects.equals(ip, that.ip);
+        return Objects.equals(fingerprint, that.fingerprint); // Fingerprint is the unique key
     }
 
     @Override
     public int hashCode() {
-        if (fingerprint != null) {
-            return Objects.hash(fingerprint);
-        }
-        return Objects.hash(ip, port);
+        return Objects.hash(fingerprint);
     }
 
     @Override
     public String toString() {
-        return String.format("%s (%s:%d)", alias, ip, port);
+        // Customize as needed for UI display
+        return String.format("%s (%s) @ %s:%d", alias, deviceModel != null ? deviceModel : deviceType, ip, port);
     }
 }
