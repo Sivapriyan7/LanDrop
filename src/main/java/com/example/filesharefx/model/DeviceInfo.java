@@ -36,28 +36,93 @@ public class DeviceInfo {
 
 
     // --- Getters and Setters ---
-    public String getAlias() { return alias; }
-    public void setAlias(String alias) { this.alias = alias; }
-    public String getVersion() { return version; }
-    public void setVersion(String version) { this.version = version; }
-    public String getDeviceModel() { return deviceModel; }
-    public void setDeviceModel(String deviceModel) { this.deviceModel = deviceModel; }
-    public String getDeviceType() { return deviceType; }
-    public void setDeviceType(String deviceType) { this.deviceType = deviceType; }
-    public String getFingerprint() { return fingerprint; }
-    public void setFingerprint(String fingerprint) { this.fingerprint = fingerprint; }
-    public String getIp() { return ip; }
-    public void setIp(String ip) { this.ip = ip; }
-    public int getPort() { return port; }
-    public void setPort(int port) { this.port = port; }
-    public String getProtocol() { return protocol; }
-    public void setProtocol(String protocol) { this.protocol = protocol; }
-    public boolean isDownload() { return download; }
-    public void setDownload(boolean download) { this.download = download; }
-    public boolean isAnnounce() { return announce; }
-    public void setAnnounce(boolean announce) { this.announce = announce; }
-    public long getLastSeenTimestamp() { return lastSeenTimestamp; }
-    public void setLastSeenTimestamp(long lastSeenTimestamp) { this.lastSeenTimestamp = lastSeenTimestamp; }
+    public String getAlias() {
+        return alias;
+    }
+
+    public void setAlias(String alias) {
+        this.alias = alias;
+    }
+
+    public String getVersion() {
+        return version;
+    }
+
+    public void setVersion(String version) {
+        this.version = version;
+    }
+
+    public String getDeviceModel() {
+        return deviceModel;
+    }
+
+    public void setDeviceModel(String deviceModel) {
+        this.deviceModel = deviceModel;
+    }
+
+    public String getDeviceType() {
+        return deviceType;
+    }
+
+    public void setDeviceType(String deviceType) {
+        this.deviceType = deviceType;
+    }
+
+    public String getFingerprint() {
+        return fingerprint;
+    }
+
+    public void setFingerprint(String fingerprint) {
+        this.fingerprint = fingerprint;
+    }
+
+    public String getIp() {
+        return ip;
+    }
+
+    public void setIp(String ip) {
+        this.ip = ip;
+    }
+
+    public int getPort() {
+        return port;
+    }
+
+    public void setPort(int port) {
+        this.port = port;
+    }
+
+    public String getProtocol() {
+        return protocol;
+    }
+
+    public void setProtocol(String protocol) {
+        this.protocol = protocol;
+    }
+
+    public boolean isDownload() {
+        return download;
+    }
+
+    public void setDownload(boolean download) {
+        this.download = download;
+    }
+
+    public boolean isAnnounce() {
+        return announce;
+    }
+
+    public void setAnnounce(boolean announce) {
+        this.announce = announce;
+    }
+
+    public long getLastSeenTimestamp() {
+        return lastSeenTimestamp;
+    }
+
+    public void setLastSeenTimestamp(long lastSeenTimestamp) {
+        this.lastSeenTimestamp = lastSeenTimestamp;
+    }
 
 
     @Override

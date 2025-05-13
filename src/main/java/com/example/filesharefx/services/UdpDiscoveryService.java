@@ -1,6 +1,6 @@
 package com.example.filesharefx.services;
 
-import com.example.filesharefx.FileServerApp; // To access HttpClient and ownDeviceInfo for HTTP response
+import com.example.filesharefx.FileServerApp;
 import com.example.filesharefx.model.DeviceInfo;
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
@@ -9,12 +9,14 @@ import javafx.collections.ObservableList;
 
 import java.io.IOException;
 import java.net.*;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -51,8 +53,7 @@ public class UdpDiscoveryService {
         this.gson = new Gson();
     }
 
-    public String getLocalIpAddress()
-    {
+    public String getLocalIpAddress() {
         return this.localIpAddress;
     }
 
@@ -350,12 +351,12 @@ public class UdpDiscoveryService {
                     if (addr instanceof Inet4Address && !addr.isLoopbackAddress() && addr.isSiteLocalAddress()) {
                         // Prefer non-loopback, site-local IPv4 for LAN
                         return addr.getHostAddress();
-                    } else if (addr instanceof Inet4Address && !addr.isLoopbackAddress()){
+                    } else if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
                         candidateAddresses.add(addr); // Store other non-loopback IPv4 as fallback
                     }
                 }
             }
-            if(!candidateAddresses.isEmpty()){
+            if (!candidateAddresses.isEmpty()) {
                 return candidateAddresses.get(0).getHostAddress(); // Return first non-loopback IPv4 if no site-local found
             }
             // Final fallback
@@ -375,7 +376,7 @@ public class UdpDiscoveryService {
                 continue;
             }
             Enumeration<InetAddress> addresses = ni.getInetAddresses();
-            while(addresses.hasMoreElements()){
+            while (addresses.hasMoreElements()) {
                 InetAddress addr = addresses.nextElement();
                 // Check if address family matches multicast group and is suitable
                 if (multicastGroup instanceof Inet4Address && addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
