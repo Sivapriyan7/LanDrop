@@ -57,6 +57,28 @@ public class UdpDiscoveryService {
         return this.localIpAddress;
     }
 
+    /**
+     * Starts the UDP Discovery Service.
+     * <p>
+     * This method performs the following steps:
+     * <ul>
+     *     <li>Checks if the service is already running and exits if so.</li>
+     *     <li>Attempts to determine the best local IP address to use.</li>
+     *     <li>Initializes and binds a {@link MulticastSocket} to the discovery port.</li>
+     *     <li>Joins a multicast group using a suitable network interface if found, or falls back to default.</li>
+     *     <li>Configures the socket's loopback mode and time-to-live settings.</li>
+     *     <li>Starts background threads for listening to multicast packets and scheduling periodic announcements and cleanup tasks.</li>
+     * </ul>
+     * <p>
+     * If any step fails (e.g., IP cannot be determined, socket errors), the method logs the error and aborts startup.
+     *
+     * @see #stop() for stopping the service
+     * @see #sendAnnouncement() for sending periodic device presence messages
+     * @see #listenLoop() for handling incoming multicast messages
+     * @see #cleanupStaleDevices() for removing inactive devices
+     */
+
+
     public void start() {
         if (running) return;
 
@@ -154,7 +176,29 @@ public class UdpDiscoveryService {
         }
     }
 
-
+    /**
+     * Listens for incoming multicast UDP packets in a loop.
+     * <p>
+     * This method runs in a background (daemon) thread and blocks while waiting for packets using
+     * {@link java.net.MulticastSocket#receive(java.net.DatagramPacket)}. It processes incoming packets
+     * containing JSON-encoded {@link DeviceInfo} objects from other devices on the network.
+     * <p>
+     * The loop continues as long as the discovery service is marked as {@code running}, and the socket
+     * is valid and open. For each packet:
+     * <ul>
+     *   <li>Parses the sender's IP and deserializes the JSON payload into a {@code DeviceInfo} object.</li>
+     *   <li>Ignores packets from the same device (identified by fingerprint).</li>
+     *   <li>Updates or adds the device to the active devices map.</li>
+     *   <li>If the received device is announcing itself, sends a response back.</li>
+     * </ul>
+     * <p>
+     * Handles malformed JSON, I/O exceptions, and logs issues accordingly. The method exits cleanly when the
+     * discovery service is stopped or the socket is closed.
+     *
+     * @see DeviceInfo
+     * @see #respondToAnnouncement(DeviceInfo)
+     * @see #addOrUpdateActiveDevice(DeviceInfo)
+     */
     private void listenLoop() {
         byte[] buffer = new byte[2048]; // Buffer for incoming packets
         DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
