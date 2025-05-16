@@ -77,8 +77,6 @@ public class UdpDiscoveryService {
      * @see #listenLoop() for handling incoming multicast messages
      * @see #cleanupStaleDevices() for removing inactive devices
      */
-
-
     public void start() {
         if (running) return;
 
@@ -256,6 +254,18 @@ public class UdpDiscoveryService {
         System.out.println("UDP Discovery: Listener thread stopped.");
     }
 
+    /**
+     * Adds a new device or updates an existing device in the active devices map.
+     * <p>
+     * The device is identified by its unique fingerprint. If a device with the same fingerprint already exists,
+     * its entry is updated with the new information. Otherwise, the device is added as a new entry.
+     * <p>
+     * The UI device list is refreshed regardless of whether the device was newly added or just updated.
+     *
+     * @param deviceInfo the {@link DeviceInfo} object containing the device's IP, port, and other identifying data
+     * @return {@code true} if the device was newly added or its IP/port changed from the existing entry,
+     *         {@code false} if the existing device was unchanged and just updated
+     */
     private boolean addOrUpdateActiveDevice(DeviceInfo deviceInfo) {
         // Returns true if the device was newly added (not just updated)
         DeviceInfo existingDevice = activeDevicesMap.put(deviceInfo.getFingerprint(), deviceInfo);
@@ -263,6 +273,19 @@ public class UdpDiscoveryService {
         return existingDevice == null || !existingDevice.getIp().equals(deviceInfo.getIp()) || existingDevice.getPort() != deviceInfo.getPort();
     }
 
+    /**
+     * Responds to a device's UDP discovery announcement by sending this device's {@link DeviceInfo}.
+     * <p>
+     * This method prepares a response containing the current device's metadata and attempts to deliver it in two ways:
+     * <ul>
+     *   <li><b>Primary:</b> Sends an HTTP POST response directly to the announcing device.</li>
+     *   <li><b>Fallback/Supplementary:</b> Sends a multicast UDP packet after a short delay.</li>
+     * </ul>
+     * The HTTP response is sent asynchronously to avoid blocking the main listener thread.
+     * The UDP fallback helps in scenarios where HTTP is unavailable or blocked.
+     *
+     * @param announcerInfo the {@link DeviceInfo} of the device that sent the discovery announcement.
+     */
     private void respondToAnnouncement(DeviceInfo announcerInfo) {
         // Prepare our own device info for the response
         DeviceInfo responseDeviceInfo = new DeviceInfo(
@@ -293,7 +316,21 @@ public class UdpDiscoveryService {
             sendUdpMulticast(gson.toJson(responseDeviceInfo));
         }, 500, TimeUnit.MILLISECONDS); // Small delay
     }
-
+    /**
+     * Sends a direct HTTP response to a device that announced itself over the network.
+     * <p>
+     * This method constructs a POST request to the target device's discovery response endpoint,
+     * using the IP address, port, and protocol specified in the {@code targetDevice} object.
+     * The payload includes this device's own {@link DeviceInfo}, allowing the target to register
+     * or update information about this device.
+     * <p>
+     * If the request is successful (HTTP 2xx), it is logged as successful. Otherwise, an error is logged.
+     * This method is typically used as the primary (reliable) response mechanism in a LAN discovery protocol.
+     *
+     * @param targetDevice        the {@link DeviceInfo} object representing the device to respond to;
+     *                            contains protocol, IP address, and port
+     * @param payloadDeviceInfo   the {@link DeviceInfo} payload to send as the response (usually this device's info)
+     */
     private void sendHttpResponseToDevice(DeviceInfo targetDevice, DeviceInfo payloadDeviceInfo) {
         try {
             String targetHttpProtocol = targetDevice.getProtocol() != null ? targetDevice.getProtocol() : "http";
