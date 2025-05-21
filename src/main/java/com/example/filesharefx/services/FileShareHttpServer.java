@@ -117,7 +117,7 @@ public class FileShareHttpServer {
             if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 String requestOriginIp = exchange.getRemoteAddress().getAddress().getHostAddress();
                 try (InputStreamReader isr = new InputStreamReader(exchange.getRequestBody(), StandardCharsets.UTF_8);
-                     BufferedReader br = new BufferedReader(isr)) {
+                    BufferedReader br = new BufferedReader(isr)) {
                     String requestBody = br.lines().collect(Collectors.joining("\n"));
                     DeviceInfo respondingDevice = gson.fromJson(requestBody, DeviceInfo.class);
 
@@ -154,7 +154,7 @@ public class FileShareHttpServer {
         public void handle(HttpExchange exchange) throws IOException {
             if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 try (InputStreamReader isr = new InputStreamReader(exchange.getRequestBody(), StandardCharsets.UTF_8);
-                     BufferedReader br = new BufferedReader(isr)) {
+                    BufferedReader br = new BufferedReader(isr)) {
                     String requestBody = br.lines().collect(Collectors.joining("\n"));
                     FileTransferRequest transferRequest = gson.fromJson(requestBody, FileTransferRequest.class);
 

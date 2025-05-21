@@ -132,6 +132,20 @@ public class UdpDiscoveryService {
     }
 
     // In UdpDiscoveryService.java
+    /**
+     * Adds or updates a device discovered via an HTTP registration call.
+     * <p>
+     * This method is typically invoked when a device responds to a discovery announcement
+     * using HTTP instead of UDP. It ensures the discovered device is valid, not the current
+     * device itself, and updates its last seen timestamp before adding or updating it in the
+     * active devices map.
+     * <p>
+     * This enables devices to discover each other using HTTP as a transport mechanism
+     * and keeps the active device list updated.
+     *
+     * @param deviceInfoFromHttp the {@link DeviceInfo} object received via HTTP registration.
+     *                           Must contain a valid fingerprint; null or self-fingerprints are ignored.
+     */
     public void addOrUpdateDiscoveredDeviceViaHttp(DeviceInfo deviceInfoFromHttp) {
         if (deviceInfoFromHttp == null || deviceInfoFromHttp.getFingerprint() == null ||
                 ownDeviceInfo.getFingerprint().equals(deviceInfoFromHttp.getFingerprint())) {
@@ -143,7 +157,15 @@ public class UdpDiscoveryService {
         addOrUpdateActiveDevice(deviceInfoFromHttp);
         System.out.println("UDP Discovery: Device " + deviceInfoFromHttp.getAlias() + " updated/added via HTTP register call.");
     }
-
+    /**
+     * Sends a primary UDP multicast announcement containing this device's information.
+     * <p>
+     * This method marks the device info as an announcement, updates the download status,
+     * serializes the {@code ownDeviceInfo} to JSON, and broadcasts it over the multicast group.
+     * The announcement is used to inform other devices on the local network of this device's presence.
+     * <p>
+     * The method returns immediately if the service is not running or the multicast socket is closed.
+     */
     private void sendAnnouncement() {
         if (!running || multicastSocket == null || multicastSocket.isClosed()) return;
 
@@ -156,7 +178,15 @@ public class UdpDiscoveryService {
         sendUdpMulticast(message);
         // System.out.println("UDP Discovery: Sent announcement: " + message);
     }
-
+    /**
+     * Sends a UDP multicast message containing the specified JSON string to the discovery group.
+     * <p>
+     * This method constructs a {@link DatagramPacket} with the given JSON payload and sends it to the
+     * predefined multicast group and port used for device discovery. If a specific network interface
+     * was selected for multicast, it sets that interface for sending the packet.
+     *
+     * @param jsonMessage the JSON-formatted {@link DeviceInfo} object responseDeviceInfo to be sent as the multicast message.
+     */
     private void sendUdpMulticast(String jsonMessage) {
         try {
             byte[] sendData = jsonMessage.getBytes(StandardCharsets.UTF_8);
@@ -367,7 +397,15 @@ public class UdpDiscoveryService {
         }
     }
 
-
+    /**
+     * Removes devices from the active device list that haven't been seen within the timeout period.
+     * <p>
+     * This method iterates over the {@code activeDevicesMap} and removes any {@code DeviceInfo}
+     * whose {@code lastSeenTimestamp} is older than the configured timeout threshold
+     * ({@code DEVICE_TIMEOUT_S}). If any devices are removed, the UI device list is refreshed.
+     * <p>
+     * The method does nothing if the service is not currently running.
+     */
     private void cleanupStaleDevices() {
         if (!running) return;
         long now = System.currentTimeMillis();
@@ -380,6 +418,13 @@ public class UdpDiscoveryService {
         }
     }
 
+    /**
+     * Updates the UI with the current list of active devices.
+     * <p>
+     * This method updates the UI by replacing the displayed list of discovered devices with the
+     * current contents of the {@code activeDevicesMap}. It uses {@link Platform#runLater(Runnable)}
+     * to ensure the update occurs on the JavaFX Application Thread.
+     */
     private void updateUiDeviceList() {
         Platform.runLater(() -> {
             discoveredDevicesUi.setAll(new ArrayList<>(activeDevicesMap.values()));
@@ -417,6 +462,19 @@ public class UdpDiscoveryService {
         System.out.println("UDP Discovery: Service stopped.");
     }
 
+    /**
+     * Determines the most appropriate local IPv4 address for multicast and LAN communication.
+     * <p>
+     * This method scans all available network interfaces and attempts to find the best IP address
+     * by prioritizing:
+     * <ul>
+     *     <li>Non-loopback, site-local IPv4 addresses (e.g., 192.168.x.x, 10.x.x.x) — preferred for LAN communication.</li>
+     *     <li>Other non-loopback IPv4 addresses as a fallback.</li>
+     *     <li>If no suitable address is found, falls back to {@code InetAddress.getLocalHost()}.</li>
+     * </ul>
+     *
+     * @return the selected local IP address as a string, or {@code null} if none could be determined.
+     */
     private String getBestLocalIpAddress() {
         try {
             Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
@@ -448,7 +506,23 @@ public class UdpDiscoveryService {
             return null;
         }
     }
-
+    /**
+     * Attempts to find the most suitable network interface for joining a multicast group.
+     * <p>
+     * The method iterates through all available network interfaces and selects the first one that:
+     * <ul>
+     *     <li>Is up and active</li>
+     *     <li>Is not a loopback or virtual interface</li>
+     *     <li>Supports multicast</li>
+     *     <li>Has an IP address of the same family (IPv4) as the provided multicast group</li>
+     * </ul>
+     * If no matching interface is found, the method returns {@code null} to allow the OS
+     * to select the default interface.
+     *
+     * @param multicastGroup the multicast group address to match address family (IPv4)
+     * @return a suitable {@link NetworkInterface} for multicast, or {@code null} if none found
+     * @throws SocketException if an I/O error occurs while accessing the network interfaces
+     */
     private NetworkInterface findMulticastNetworkInterface(InetAddress multicastGroup) throws SocketException {
         Enumeration<NetworkInterface> nis = NetworkInterface.getNetworkInterfaces();
         while (nis.hasMoreElements()) {
