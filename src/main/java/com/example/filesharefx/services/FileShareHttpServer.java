@@ -82,6 +82,18 @@ public class FileShareHttpServer {
         return this.port;
     }
 
+    /**
+     * Sends an HTTP response with the specified status code, content type, and response body.
+     * <p>
+     * This utility method sets the appropriate headers (including UTF-8 encoding),
+     * writes the response body to the output stream, and ensures proper closing of the stream.
+     *
+     * @param exchange     the {@link HttpExchange} object representing the HTTP request and response
+     * @param statusCode   the HTTP status code to send (e.g., 200 for OK, 400 for Bad Request)
+     * @param contentType  the MIME type of the response (e.g., "application/json", "text/plain")
+     * @param responseBody the string content to be sent as the response body
+     * @throws IOException if an I/O error occurs during writing the response
+     */
     private void sendResponse(HttpExchange exchange, int statusCode, String contentType, String responseBody) throws IOException {
         exchange.getResponseHeaders().set("Content-Type", contentType + "; charset=UTF-8");
         byte[] responseBytes = responseBody.getBytes(StandardCharsets.UTF_8);
@@ -92,6 +104,28 @@ public class FileShareHttpServer {
     }
 
     // --- Handler for current device info ---
+    /**
+     * Handles incoming HTTP GET requests to the `/info` endpoint.
+     * <p>
+     * This endpoint returns the current device's metadata as a JSON response.
+     * It is typically used by other devices in the network to retrieve basic information
+     * such as alias, IP address, protocol, download capability, and other identifiers.
+     *
+     * /**<br><br>handle Method:<br>
+     *  * Processes HTTP GET requests and returns the current device's information.
+     *  * <p>
+     *  * Before responding, it ensures that dynamic fields like the IP address,
+     *  * protocol, and download status are up to date.
+     *  * <p>
+     *  * Response codes:
+     *  * <ul>
+     *  *   <li>200 - Success. Returns a JSON object with device information.</li>
+     *  *   <li>405 - Method Not Allowed. If the request method is not GET.</li>
+     *  * </ul>
+     *  *
+     *  * @param exchange the HTTP exchange object representing the request and response.
+     *  * @throws IOException if an error occurs while writing the response.
+     *  */
     class InfoHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
@@ -149,6 +183,24 @@ public class FileShareHttpServer {
 
 
     // --- Handler for incoming file transfer requests ---
+    /**
+     * Handles incoming HTTP POST requests to the `/send-request` endpoint.
+     * <p>
+     * This handler receives file transfer requests from other devices, parses the
+     * request JSON into a {@link FileTransferRequest}, displays a confirmation dialog
+     * to the user, and responds with either an acceptance (including a generated session ID)
+     * or a rejection.
+     *
+     * Expected content type: application/json
+     * Expected format:
+     * {
+     *     "info": {...},
+     *     "files": {
+     *         "fileId1": { "fileName": "...", "size": ... },
+     *         ...
+     *     }
+     * }
+     */
     class SendRequestHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
@@ -194,6 +246,38 @@ public class FileShareHttpServer {
     }
 
     // --- Handler for receiving actual file data ---
+    /**
+     * Handles incoming HTTP POST requests to the `/send-file` endpoint.
+     * <p>
+     * This endpoint is responsible for receiving actual file data from the sender,
+     * typically after a file transfer session has been accepted via `/send-request`.
+     * <p>
+     * The handler validates headers like {@code X-Session-ID} and {@code X-File-ID},
+     * ensures the file metadata exists for the session, and writes the file content
+     * to the local disk in a designated downloads directory.
+     **<br><br>handle Method:<br>
+     * Processes HTTP POST requests to receive and store a file from a remote device.
+     * <p>
+     * Expects two HTTP headers:
+     * <ul>
+     *   <li>{@code X-Session-ID} - Identifier of the file transfer session.</li>
+     *   <li>{@code X-File-ID} - Identifier of the specific file within that session.</li>
+     * </ul>
+     * The file content is read from the request body and saved to the {@code downloads_localsend} directory.
+     * <p>
+     * Response codes:
+     * <ul>
+     *   <li>200 - File received successfully and size matches</li>
+     *   <li>400 - Missing headers</li>
+     *   <li>404 - Unknown session or file ID</li>
+     *   <li>500 - Internal error (e.g., file system issue, size mismatch)</li>
+     *   <li>405 - If method is not POST</li>
+     * </ul>
+     *
+     * @param exchange the HTTP exchange object containing the request and response.
+     * @throws IOException if an I/O error occurs while handling the request.
+     */
+
     class SendFileHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
