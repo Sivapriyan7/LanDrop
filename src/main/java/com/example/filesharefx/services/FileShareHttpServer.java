@@ -46,7 +46,27 @@ public class FileShareHttpServer {
         this.port = desiredPort; // 0 for dynamic, or a specific port like 53317
         this.gson = new Gson();
     }
-
+    /**
+     * Initializes and starts the HTTP server used for LocalSend communication.
+     * <p>
+     * This method performs the following steps:
+     * <ul>
+     *     <li>Creates an HTTP server on the specified port. If the port is {@code 0}, the OS will choose an available port.</li>
+     *     <li>Sets a cached thread pool executor with daemon threads to handle incoming HTTP requests.</li>
+     *     <li>Registers handlers for the following endpoints as per the LocalSend protocol:
+     *         <ul>
+     *             <li>{@code /info} - returns device information.</li>
+     *             <li>{@code /register} - handles device discovery registration via HTTP.</li>
+     *             <li>{@code /send-request} - initiates a file transfer request.</li>
+     *             <li>{@code /send-file} - receives the actual file data.</li>
+     *         </ul>
+     *     </li>
+     *     <li>Starts the HTTP server and logs the active port being used.</li>
+     *     <li>Updates the local device info object with the actual port in use.</li>
+     * </ul>
+     *
+     * @throws IOException if an error occurs while creating or starting the server
+     */
     public void start() throws IOException {
         // If port is 0, OS assigns an available port. Otherwise, tries the specified port.
         server = HttpServer.create(new InetSocketAddress(this.port), 0);
@@ -70,6 +90,16 @@ public class FileShareHttpServer {
         this.ownDeviceInfoRef.setPort(this.port);
     }
 
+    /**
+     * Stops the HTTP server gracefully.
+     * <p>
+     * If the server is running, this method shuts it down with a 1-second delay to allow
+     * any ongoing exchanges to complete before termination.
+     * </p>
+     * <p>
+     * Logs messages before and after the server is stopped for monitoring purposes.
+     * </p>
+     */
     public void stop() {
         if (server != null) {
             System.out.println("Stopping HTTP Server...");
@@ -145,6 +175,24 @@ public class FileShareHttpServer {
     }
 
     // --- Handler for devices registering/responding to our announcements via HTTP ---
+    /**
+     * Handles HTTP POST requests to the `/register` endpoint as part of the LocalSend discovery protocol.
+     * <p>
+     * This handler is invoked when a remote device responds to a multicast UDP announcement with an HTTP
+     * registration request. The request body should contain the device's {@link DeviceInfo} JSON payload.
+     * </p>
+     *
+     * <p>Functionality:</p>
+     * <ul>
+     *   <li>Accepts only HTTP POST requests. Returns 405 for other methods.</li>
+     *   <li>Parses the incoming JSON body into a {@code DeviceInfo} object.</li>
+     *   <li>Uses the IP from the request if not explicitly provided in the {@code DeviceInfo} payload.</li>
+     *   <li>Updates or adds the remote device info in the active discovery map via {@code addOrUpdateDiscoveredDeviceViaHttp}.</li>
+     *   <li>Returns HTTP 200 with a JSON status response if valid; otherwise responds with appropriate error codes (400 for bad data, 405 for wrong method).</li>
+     * </ul>
+     *
+     * <p>This endpoint is critical for peer discovery and confirmation over HTTP after the initial UDP-based handshake.</p>
+     */
     class RegisterHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
